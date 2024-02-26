@@ -1,0 +1,45 @@
+canvas {
+  image-rendering: pixelated;
+  border-radius: 1em;
+  border-style: solid;
+  border-color: white;
+  border-width: 1px;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: monospace;
+  background: black;
+  margin: 0;
+  padding: 0;
+}
+
+#title {
+  position: absolute;
+  text-align: center;
+  width: 100%;
+  color: white;
+  top: 0%;
+  font-size: 3em;
+}
+
+#display {
+  flex: 50%;
+  aspect-ratio: 1;
+}
+
+#pattern {
+  flex: 50%;
+  aspect-ratio: 1;
+}
+
+#container {
+  width: calc(100% - 4em);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2em;
+  gap: 2em;
+}
