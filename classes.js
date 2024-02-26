@@ -1,96 +1,192 @@
 class Cell {
-  possibilities = new Uint8ClampedArray(colors.length);
-  ruleRef;
-  dispRef;
-  x;
-  y;
-  
+  possible = [];
+  original = [];
+  resets = 0;
+  pos = {
+    x: 0,
+    y: 0
+  };
+  thread;
+  currentCB;
 
-  constructor () {
-    for (let i = 0; i < this.possibilities.length; i++)
-      this.possibilities[i] = i;
+  constructor(x, y, poss, thread) {
+    this.id = x + " " + y;
+    this.pos.x = x;
+    this.pos.y = y;
+    this.possible = new Array(poss).fill().map((v, i) => i);
+    this.thread = thread;
+
+    if (thread) {
+      thread.addEventListener("message", ({ data }) => {
+        if (data.id != this.id) return;
+        this.possibilities = data.possibilities;
+        if (this.currentCB) this.currentCB(this.possible.length);
+      });
+    }
   }
 
-  setPosition(x, y) { this.x = x; this.y = y; }
-  setRuleRef (ref) { this.ruleRef = ref; }
-  setDispRef (ref) { this.dispRef = ref; }
+  collapse(cells, cb) {
+    // if (this.thread) {
+      let neighbors = takeSample(cells, this.pos).map(nb => nb?.map(v => v.id));
+      this.currentCB = cb;
+      this.thread.postMessage({ id: this.id }, [neighbors, this.possible]);
+    // } else {
+    //   this.manual(cells, cb);
+    // }
+  }
 
-  recalculate() {
-    if (this.x == undefined || this.y == undefined) return console.error("Position not set.");
-    if (this.ruleRef == undefined) return console.error("No rule reference set.");
-    if (this.dispRef == undefined) return console.error("No display reference set.");
+  // manual(cells, cb) {
+  //   let neighbors = takeSample(cells, this.pos).map(nb => nb?.map(v => v.id));
+  //   let newPoss = [];
 
-    let nPoss = [];
-    let changed = false;
-    let pos = { x: this.x, y: this.y };
+  //   for (let i = 0; i < this.possible.length; i++) {
+  //     if (this.possible[i].verify(neighbors)) {
+  //       newPoss.push(this.possible[i]);
+  //     }
+  //   }
 
-    for (let i = 0; i < this.possibilities.length; i++) {
-      let poss = this.possibilities[i];
-      let col = colors[poss];
-      let val = false;
+  //   if (newPoss.length == 0) {
+  //     this.possible = this.original.map(v => v);
+  //     cells.recordBacktrack(this.pos);
+  //     this.resets++;
 
-      for (let j = 0; j < this.ruleRef.length; j++)
-        val = this.ruleRef[j].validate(poss, pos) || val;
+  //     if (this.resets >= 3) {
+  //       cells.backtrack(this.pos);
+  //     }
+  //   } else {
+  //     this.possible = newPoss;
+  //     this.resets = 0;
+  //   }
 
-      if (!val) changed = true;
-      else nPoss.push(poss);
+  //   cb(this.possible.length);
+  // }
+
+  backtrack() {
+    this.possible = new Array(poss).fill().map((v, i) => i);
+    return true;
+  }
+}
+
+class Cells {
+  cells = [];
+  notCollapsed = [];
+  threadPool = [];
+  collapseComplete = false;
+  width = 0;
+  height = 0;
+  threadCount = 0;
+  
+  constructor(width, height, id, threadCount) {
+    for (let i = 0; i < threadCount; i++) {
+      let worker = new Worker("/possibilities.js");
+      this.threadPool.push(worker);
+    }
+    
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < height; y++) {
+        this.notCollapsed.push(this.cells.length);
+        
+        if (!threadCount){
+          this.cells.push(new Cell(x, y, id.length));
+          continue;
+        }
+        
+        this.cells.push(new Cell(x, y, id.length, this.threadPool[(x * height + y) % threadCount]));
+      }
     }
 
-    if (changed) this.possibilities = new Uint8ClampedArray(nPoss);
+    this.width = width;
+    this.height = height;
+    this.threadCount = threadCount;
+    this.notCollapsed.sort((a, b) => Math.random() - .5);
   }
 
-  collapse() {
-    let pick = this.possibilities[Math.floor(Math.random() * this.possibilities.length)];
-    this.possibilities = new Uint8ClampedArray(1);
-    this.possibilities[0] = pick;
+  reset() {
+    this.notCollapsed = [];
+    for (let i = 0; i < this.cells.length; i++) {
+      this.notCollapsed.push(this.cells.length);
+      this.cells[i].backtrack();
+    }
+    this.notCollapsed.sort((a, b) => Math.random() - .5);
   }
-}
 
-class Rule {
-  dispRef;
-  sample;
-  
-  constructor (sample) { this.sample = sample; }
-  setDispRef (ref) { this.dispRef = ref; }
+  get (x, y) {
+    if (x < 0 || y < 0) return null;
+    if (y >= this.height || x >= this.width) return null;
+    return this.cells[x * this.height + y];
+  }
 
-  // poss = int, pos = { x, y }
-  validate (poss, pos) {
-    if (this.sample == undefined) return console.error("Invalid sample.");
-    if (this.dispRef == undefined) return console.error("No display reference set.");
+  backtrack(pos) {
+    for (let x = -1; x <= 1; x++)
+      for (let y = -1; y <= 1; y++)
+        if (this.get(x + pos.x, y + pos.y)?.backtrack())
+          this.notCollapsed.push((x + pos.x) * this.height + y + pos.y);
+  }
 
-    let vals = [
-      (this.sample.cen == poss),
-      this.dispRef[pos.x - 1]?.[pos.y]?.possibilities?.includes(this.sample.lef),
-      this.dispRef[pos.x + 1]?.[pos.y]?.possibilities?.includes(this.sample.rig),
-      this.dispRef[pos.x]?.[pos.y - 1]?.possibilities?.includes(this.sample.top),
-      this.dispRef[pos.x]?.[pos.y + 1]?.possibilities?.includes(this.sample.dow),
-      this.dispRef[pos.x + 1]?.[pos.y - 1]?.possibilities?.includes(this.sample.trg),
-      this.dispRef[pos.x - 1]?.[pos.y - 1]?.possibilities?.includes(this.sample.tlf),
-      this.dispRef[pos.x + 1]?.[pos.y + 1]?.possibilities?.includes(this.sample.brg),
-      this.dispRef[pos.x - 1]?.[pos.y + 1]?.possibilities?.includes(this.sample.blf)
-    ];
+  recordBacktrack(pos) {
+    this.notCollapsed.push(pos.x * this.height + pos.y);
+  }
 
-    let ret = true;
+  collapseAll(cb) {
+    let isDone = true;
+    let count = 0;
+    this.notCollapsed = [];
+    
+    for (let i = 0; i < this.cells.length; i++) {
+      this.cells[i].collapse(this, (len) => {
+        count ++;
+        if (len > 1) {
+          isDone = false;
+          this.notCollapsed.push(i);
+        }
 
-    for (let i = 0; i < vals.length; i++) {
-      if (vals[i] == false) ret = false;
+        if (count >= this.cells.length - 1) {
+          this.notCollapsed.sort((a, b) => Math.random() - .5);
+          if (isDone) this.collapseComplete = true;
+          cb(isDone);
+        }
+      });
+    }
+  }
+
+  collapse(x, y) {
+    let pos = x * this.width + y;
+    let arr = this.cells[pos].possible;
+    let ind = Math.floor(Math.random() * arr.length);
+
+    this.cells[pos].possible = [arr[ind]];
+  }
+
+  collapseRandom(probs) {
+    if (!this.notCollapsed.length) return 1;
+    let pos = this.notCollapsed.pop();
+    let arr = this.cells[pos].possible;
+    let prob = arr.map(v => probs[id[v]]);
+    let sum = prob.reduce((a, b) => a + b,  0);
+    let rand = Math.random() * sum;
+    let index = 0;
+
+    while (true) {
+      let n = prob[index];
+      if (isNaN(n)) n = 0;
+      rand -= n;
+
+      if (rand <= 0) break;
+      index++;
     }
 
-    return ret;
+    this.cells[pos].possible = [arr[index]];
   }
 }
 
-function sample(ptrn, x, y) {
-  return {
-    cen: ptrn[x][y],
-    trg: ptrn[x + 1][y - 1],
-    top: ptrn[x][y - 1],
-    tlf: ptrn[x - 1][y - 1],
-    lef: ptrn[x - 1][y],
-    blf: ptrn[x - 1][y + 1],
-    dow: ptrn[x][y + 1],
-    brg: ptrn[x + 1][y + 1],
-    rig: ptrn[x + 1][y],
-  }
-}
+function takeSample(cells, pos) {
+  let arr = [];
 
+  for (let x = -1; x <= 1; x++) {
+    for (let y = -1; y <= 1; y++) {
+      arr.push(cells.get(pos.x + x, pos.y + y)?.possible);
+    }
+  }
+
+  return arr;
+}
